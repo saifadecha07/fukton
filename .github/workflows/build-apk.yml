@@ -1,0 +1,72 @@
+# Builds the Android APK on GitHub's servers and publishes it as a release,
+# so it can be downloaded straight from a phone browser.
+# The APK is signed with the same key as the copy already on the phone
+# (stored in the DEBUG_KEYSTORE_B64 secret), so it installs as an update
+# and keeps all practice data.
+name: Build APK
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.7'
+          channel: stable
+          cache: true
+
+      - name: Restore signing key
+        env:
+          KEYSTORE_B64: ${{ secrets.DEBUG_KEYSTORE_B64 }}
+        run: |
+          if [ -z "$KEYSTORE_B64" ]; then
+            echo "::error::Secret DEBUG_KEYSTORE_B64 is missing; the APK would not install over the existing app."
+            exit 1
+          fi
+          mkdir -p "$HOME/.android"
+          echo "$KEYSTORE_B64" | base64 -d > "$HOME/.android/debug.keystore"
+
+      - name: Read version
+        id: ver
+        run: |
+          v=$(grep -E '^version:' pubspec.yaml | sed -E 's/version:[[:space:]]*//')
+          echo "name=${v%%+*}" >> "$GITHUB_OUTPUT"
+          echo "build=${v##*+}" >> "$GITHUB_OUTPUT"
+
+      - run: flutter pub get
+
+      - name: Build APK
+        run: flutter build apk --release
+
+      - name: Rename APK
+        run: cp build/app/outputs/flutter-apk/app-release.apk "fukton-v${{ steps.ver.outputs.build }}.apk"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fukton-v${{ steps.ver.outputs.build }}
+          path: fukton-v${{ steps.ver.outputs.build }}.apk
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ steps.ver.outputs.build }}
+          name: ฝึกตน ${{ steps.ver.outputs.name }} (build ${{ steps.ver.outputs.build }})
+          body: |
+            ดาวน์โหลดไฟล์ `fukton-v${{ steps.ver.outputs.build }}.apk` ด้านล่าง แล้วกด "อัปเดต" ทับแอปเดิม ข้อมูลที่ฝึกไว้จะยังอยู่ครบ
+          files: fukton-v${{ steps.ver.outputs.build }}.apk
+          make_latest: true
