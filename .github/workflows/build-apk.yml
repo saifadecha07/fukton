@@ -38,8 +38,8 @@ jobs:
             echo "::error::Secret DEBUG_KEYSTORE_B64 is missing; the APK would not install over the existing app."
             exit 1
           fi
-          mkdir -p "$HOME/.android"
-          echo "$KEYSTORE_B64" | base64 -d > "$HOME/.android/debug.keystore"
+          echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/fukton.keystore"
+          echo "FUKTON_KEYSTORE=$RUNNER_TEMP/fukton.keystore" >> "$GITHUB_ENV"
 
       - name: Read version
         id: ver
@@ -52,6 +52,17 @@ jobs:
 
       - name: Build APK
         run: flutter build apk --release
+
+      - name: Check the signing key matches the app on the phone
+        run: |
+          expected=69e38973c48bc7d6f55cc8c8e9f0888d3deb7068e948798da4e346f28797eb06
+          apksigner=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)
+          actual=$("$apksigner" verify --print-certs build/app/outputs/flutter-apk/app-release.apk | grep -i 'SHA-256 digest' | head -1 | awk '{print $NF}')
+          echo "signer: $actual"
+          if [ "$actual" != "$expected" ]; then
+            echo "::error::APK is signed with a different key and would not install over the existing app."
+            exit 1
+          fi
 
       - name: Rename APK
         run: cp build/app/outputs/flutter-apk/app-release.apk "fukton-v${{ steps.ver.outputs.build }}.apk"

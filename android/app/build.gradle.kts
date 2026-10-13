@@ -30,11 +30,24 @@ android {
         versionName = flutter.versionName
     }
 
+    // The app on the phone was first signed with this PC's debug key. Every
+    // later build must use that same key or it will not install as an update.
+    // CI points FUKTON_KEYSTORE at a copy of it; locally the debug key is used.
+    val sharedKey = System.getenv("FUKTON_KEYSTORE")?.let { file(it) }?.takeIf { it.exists() }
+    signingConfigs {
+        if (sharedKey != null) {
+            create("shared") {
+                storeFile = sharedKey
+                storePassword = "android"
+                keyAlias = "androiddebugkey"
+                keyPassword = "android"
+            }
+        }
+    }
+
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName(if (sharedKey != null) "shared" else "debug")
         }
     }
 }
