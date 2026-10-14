@@ -3,6 +3,8 @@ import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:screen_brightness/screen_brightness.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 
 import 'iq.dart';
 import 'mascot.dart';
@@ -12,8 +14,9 @@ import 'theme.dart';
 
 // เรียนในห้อง — be present in class, not just in the room.
 // Before: set a question (pre-questioning primes attention) and breathe.
-// During: phone in the pocket; a silent vibration every few minutes asks
-//         "are you here?"; a dot in the notebook margin each time the mind wanders.
+// During: phone face-up on the desk, screen near-black and kept on; tap it
+//         each time the mind wanders, take one breath of light, back to class.
+//         A silent vibration every few minutes asks "are you here?".
 // After:  write the key points from memory before opening the notebook
 //         (free recall is the strongest known way to remember), name what is
 //         still unclear, and turn the points into review cards.
@@ -69,7 +72,7 @@ const _howTo = <(IconData, String, String)>[
   (Icons.hearing_rounded, 'ฟัง', 'รู้ว่ากำลังฟัง จับว่าครูกำลังพูดเรื่องหลักอะไร ตัวอย่างคืออะไร และ “ทำไม” ถึงเป็นแบบนั้น'),
   (Icons.visibility_rounded, 'ดู', 'สังเกตสิ่งที่ครูเน้น: เขียนซ้ำ ชี้ พูดช้าลง หรือบอกว่า “ตรงนี้ออกสอบ” นั่นคือแก่นของคาบ'),
   (Icons.edit_note_rounded, 'จด', 'จดด้วยคำของตัวเอง ไม่ต้องลอกทุกคำ เขียนคำถามที่สงสัยไว้ข้างกระดาษ แล้วถามเมื่อมีจังหวะ'),
-  (Icons.circle, 'จุด', 'ใจลอยเมื่อไหร่ จิ้มจุดเล็ก ๆ ที่ขอบสมุด แล้วกลับมาฟังทันที ไม่ต้องตำหนิตัวเอง'),
+  (Icons.touch_app_rounded, 'แตะ', 'วางมือถือไว้บนโต๊ะ จอจะมืดค้างไว้ ใจลอยเมื่อไหร่ แตะจอหนึ่งที แล้วกลับมาฟังทันที ไม่ต้องตำหนิตัวเอง'),
 ];
 
 class ClassroomPage extends StatefulWidget {
@@ -96,6 +99,48 @@ class _ClassroomPageState extends State<ClassroomPage> with SingleTickerProvider
   final unclear = TextEditingController();
   int dots = 0, focus = 3;
 
+  // Desk screen: near-black while listening, a breath of light after a tap.
+  static const _dark = .03, _lit = .25;
+  static const _backLines = ['กลับมาที่ห้อง', 'ครูกำลังพูดเรื่องอะไรอยู่', 'หายใจหนึ่งครั้ง แล้วฟังต่อ', 'จดคำเดียวที่ได้ยินตอนนี้'];
+  bool _back = false;
+  int _line = 0;
+  Timer? _settle;
+
+  Future<void> _bright(double v) async {
+    try {
+      await ScreenBrightness.instance.setApplicationScreenBrightness(v);
+    } catch (_) {}
+  }
+
+  void _deskOn() {
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+    WakelockPlus.enable();
+    _bright(_dark);
+  }
+
+  void _deskOff() {
+    _settle?.cancel();
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    WakelockPlus.disable();
+    ScreenBrightness.instance.resetApplicationScreenBrightness().catchError((_) {});
+  }
+
+  void _drift() {
+    HapticFeedback.selectionClick();
+    _settle?.cancel();
+    setState(() {
+      dots++;
+      _back = true;
+      _line = (_line + 1) % _backLines.length;
+    });
+    _bright(_lit);
+    _settle = Timer(const Duration(seconds: 6), () {
+      if (!mounted) return;
+      setState(() => _back = false);
+      _bright(_dark);
+    });
+  }
+
   @override
   void initState() {
     super.initState();
@@ -115,15 +160,19 @@ class _ClassroomPageState extends State<ClassroomPage> with SingleTickerProvider
   @override
   void dispose() {
     _tick?.cancel();
+    if (phase == 2) _deskOff();
     breath.dispose();
     super.dispose();
   }
 
   Future<void> _enterClass() async {
+    if (phase == 2) return;
+    breath.stop();
     setState(() {
       phase = 2;
       startedAt = DateTime.now();
     });
+    _deskOn();
     try {
       await scheduleClassBells(everyMinutes: bell, totalMinutes: minutes);
     } catch (_) {}
@@ -134,6 +183,8 @@ class _ClassroomPageState extends State<ClassroomPage> with SingleTickerProvider
 
   Future<void> _endClass() async {
     _tick?.cancel();
+    _deskOff();
+    _back = false;
     try {
       await cancelClassBells();
     } catch (_) {}
@@ -205,6 +256,8 @@ class _ClassroomPageState extends State<ClassroomPage> with SingleTickerProvider
 
   @override
   Widget build(BuildContext context) {
+    // A stray back swipe mid-class should not throw the class away.
+    if (phase == 2) return PopScope(canPop: false, child: Scaffold(backgroundColor: Colors.black, body: _inClass()));
     return Scaffold(
       backgroundColor: _bg,
       resizeToAvoidBottomInset: true,
@@ -217,8 +270,7 @@ class _ClassroomPageState extends State<ClassroomPage> with SingleTickerProvider
               const SizedBox(width: 8),
               const Text('เรียนในห้อง', style: TextStyle(fontFamily: cute, fontSize: 18, color: _ink, fontWeight: FontWeight.w600)),
               const Spacer(),
-              if (phase != 2)
-                IconButton(onPressed: () => Navigator.of(context).pop(), icon: const Icon(Icons.close_rounded, color: _dim)),
+              IconButton(onPressed: () => Navigator.of(context).pop(), icon: const Icon(Icons.close_rounded, color: _dim)),
             ]),
             Expanded(
               child: AnimatedSwitcher(
@@ -226,7 +278,6 @@ class _ClassroomPageState extends State<ClassroomPage> with SingleTickerProvider
                 child: switch (phase) {
                   0 => _setup(),
                   1 => _arrive(),
-                  2 => _inClass(),
                   3 => _after(),
                   _ => _done(),
                 },
@@ -260,7 +311,7 @@ class _ClassroomPageState extends State<ClassroomPage> with SingleTickerProvider
           const SizedBox(height: 8),
           _chips<int>([(50, '50'), (60, '60'), (90, '90'), (120, '120')], minutes, (v) => setState(() => minutes = v)),
           const SizedBox(height: 14),
-          const Text('ระฆังสติ (สั่นเงียบ ๆ ในกระเป๋า)', style: TextStyle(color: _ink, fontWeight: FontWeight.w500)),
+          const Text('ระฆังสติ (สั่นเบา ๆ)', style: TextStyle(color: _ink, fontWeight: FontWeight.w500)),
           const SizedBox(height: 8),
           _chips<int>([(0, 'ปิด'), (10, 'ทุก 10 นาที'), (15, 'ทุก 15 นาที'), (20, 'ทุก 20 นาที')], bell, (v) => setState(() => bell = v)),
           const SizedBox(height: 18),
@@ -274,7 +325,7 @@ class _ClassroomPageState extends State<ClassroomPage> with SingleTickerProvider
                 Padding(
                   padding: const EdgeInsets.only(bottom: 8),
                   child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    Icon(icon, size: t == 'จุด' ? 10 : 18, color: _pond),
+                    Icon(icon, size: 18, color: _pond),
                     const SizedBox(width: 10),
                     Expanded(
                       child: Text.rich(TextSpan(children: [
@@ -334,44 +385,82 @@ class _ClassroomPageState extends State<ClassroomPage> with SingleTickerProvider
 
   Widget _inClass() {
     final mins = startedAt == null ? 0 : DateTime.now().difference(startedAt!).inMinutes;
-    final tip = _howTo[tipAt % _howTo.length];
-    return Column(key: const ValueKey(2), crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-      const SizedBox(height: 10),
-      Text(subject.text.trim().isEmpty ? 'คาบเรียน' : subject.text.trim(),
-          textAlign: TextAlign.center, style: const TextStyle(fontFamily: cute, fontSize: 26, color: _ink, fontWeight: FontWeight.w600)),
-      Text('เรียนไปแล้ว $mins นาที จาก $minutes', textAlign: TextAlign.center, style: const TextStyle(color: _dim)),
-      if (intent.text.trim().isNotEmpty) ...[
-        const SizedBox(height: 16),
-        Container(
-          padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(color: _sky.withValues(alpha: .1), borderRadius: BorderRadius.circular(16)),
-          child: Text('คำถามของคาบนี้: ${intent.text.trim()}', textAlign: TextAlign.center, style: const TextStyle(color: _ink, height: 1.5)),
-        ),
-      ],
-      const Spacer(),
-      const Icon(Icons.phone_android_rounded, color: _dim, size: 40),
-      const SizedBox(height: 10),
-      const Text('เก็บมือถือลงกระเป๋าได้เลย', textAlign: TextAlign.center, style: TextStyle(fontFamily: cute, fontSize: 22, color: _ink, fontWeight: FontWeight.w600)),
-      Text(bell > 0 ? 'จะสั่นเบา ๆ ทุก $bell นาที ให้ถามใจว่า “ตอนนี้อยู่ในห้องไหม”' : 'ระฆังสติปิดอยู่',
-          textAlign: TextAlign.center, style: const TextStyle(color: _dim, height: 1.5)),
-      const Spacer(),
-      AnimatedSwitcher(
-        duration: const Duration(milliseconds: 500),
-        child: Container(
-          key: ValueKey(tipAt % _howTo.length),
-          padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(color: Colors.white.withValues(alpha: .05), borderRadius: BorderRadius.circular(16)),
-          child: Text.rich(
-            TextSpan(children: [
-              TextSpan(text: '${tip.$2}  ', style: const TextStyle(color: _pond, fontWeight: FontWeight.w600)),
-              TextSpan(text: tip.$3, style: const TextStyle(color: _ink, height: 1.5)),
-            ]),
-          ),
+    final q = intent.text.trim();
+    final faint = Colors.white.withValues(alpha: .16);
+    // Only the listen / look / note tips; the tap tip is what is happening now.
+    final tip = _howTo[_line % 3];
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: _drift,
+      child: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(24, 18, 24, 12),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            Text('${subject.text.trim().isEmpty ? 'คาบเรียน' : subject.text.trim()} · $mins / $minutes นาที',
+                textAlign: TextAlign.center, style: TextStyle(color: faint, fontSize: 14)),
+            Expanded(
+              child: Center(
+                child: AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 900),
+                  child: _back
+                      ? Column(key: const ValueKey('back'), mainAxisSize: MainAxisSize.min, children: [
+                          TweenAnimationBuilder<double>(
+                            tween: Tween(begin: .6, end: 1),
+                            duration: const Duration(seconds: 4),
+                            curve: Curves.easeInOut,
+                            builder: (_, s, _) => Transform.scale(
+                              scale: s,
+                              child: Container(
+                                width: 120,
+                                height: 120,
+                                decoration: BoxDecoration(shape: BoxShape.circle, gradient: RadialGradient(colors: [_sky.withValues(alpha: .35), Colors.transparent])),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 16),
+                          Text(_backLines[_line],
+                              textAlign: TextAlign.center,
+                              style: TextStyle(fontFamily: cute, fontSize: 22, color: _ink.withValues(alpha: .85), fontWeight: FontWeight.w600)),
+                          if (q.isNotEmpty) ...[
+                            const SizedBox(height: 10),
+                            Text('คำถามของคาบนี้ · $q',
+                                textAlign: TextAlign.center, style: TextStyle(color: _ink.withValues(alpha: .6), height: 1.5)),
+                          ],
+                          const SizedBox(height: 14),
+                          Text.rich(
+                            TextSpan(children: [
+                              TextSpan(text: '${tip.$2}  ', style: TextStyle(color: _pond.withValues(alpha: .8), fontWeight: FontWeight.w600)),
+                              TextSpan(text: tip.$3, style: TextStyle(color: _dim.withValues(alpha: .8), height: 1.5)),
+                            ]),
+                            textAlign: TextAlign.center,
+                          ),
+                          const SizedBox(height: 10),
+                          Text('ใจลอย $dots ครั้ง · กลับมาได้ทุกครั้ง', style: TextStyle(color: _dim.withValues(alpha: .6), fontSize: 13)),
+                        ])
+                      : Column(key: const ValueKey('rest'), mainAxisSize: MainAxisSize.min, children: [
+                          Text('ใจลอยเมื่อไหร่ แตะจอ', style: TextStyle(color: faint, fontSize: 15)),
+                          if (q.isNotEmpty) ...[
+                            const SizedBox(height: 8),
+                            Text(q, textAlign: TextAlign.center, style: TextStyle(color: Colors.white.withValues(alpha: .1), fontSize: 13)),
+                          ],
+                        ]),
+                ),
+              ),
+            ),
+            GestureDetector(
+              onLongPress: () {
+                HapticFeedback.mediumImpact();
+                _endClass();
+              },
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Text('กดค้างที่นี่เพื่อจบคาบ', textAlign: TextAlign.center, style: TextStyle(color: Colors.white.withValues(alpha: .1), fontSize: 12)),
+              ),
+            ),
+          ]),
         ),
       ),
-      const SizedBox(height: 16),
-      FilledButton(onPressed: _endClass, style: _primary(), child: const Text('จบคาบ · สรุปทันที')),
-    ]);
+    );
   }
 
   Widget _after() => SingleChildScrollView(
