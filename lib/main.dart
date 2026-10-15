@@ -104,7 +104,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
           child: ListenableBuilder(
             listenable: widget.store,
             builder: (context, _) => IndexedStack(index: tab, children: [
-              TodayPage(store: widget.store, onPractice: _goPractice, onSettings: () => openReminderSheet(context, widget.store)),
+              TodayPage(store: widget.store, onPractice: _goPractice, onSettings: () => openReminderSheet(context, widget.store), practice: practice),
               PracticePage(c: practice),
               LanPage(store: widget.store),
               const VersesPage(),
