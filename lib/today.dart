@@ -7,7 +7,10 @@ import 'extras.dart';
 import 'mascot.dart';
 import 'ritual.dart';
 import 'scene.dart';
+import 'practice.dart';
 import 'sheets.dart';
+import 'start.dart';
+import 'world.dart';
 import 'store.dart';
 import 'theme.dart';
 import 'urge.dart';
@@ -16,7 +19,8 @@ class TodayPage extends StatelessWidget {
   final Store store;
   final void Function(String mode) onPractice;
   final VoidCallback onSettings;
-  const TodayPage({super.key, required this.store, required this.onPractice, required this.onSettings});
+  final PracticeController practice;
+  const TodayPage({super.key, required this.store, required this.onPractice, required this.onSettings, required this.practice});
 
   @override
   Widget build(BuildContext context) {
@@ -30,6 +34,7 @@ class TodayPage extends StatelessWidget {
     final intent = d['intent'] as int?;
     final night = todNow() == Tod.night;
     final onScene = night ? const Color(0xFFF2EDE4) : const Color(0xFF15201C);
+    final glance = worldGlance(store);
 
     return ListView(
       padding: const EdgeInsets.fromLTRB(20, 8, 20, 32),
@@ -77,6 +82,33 @@ class TodayPage extends StatelessWidget {
                   style: TextStyle(fontFamily: serif, fontSize: 25, height: 1.45, fontWeight: FontWeight.w600, color: onScene),
                 ),
               ),
+              // Study world at a glance: real hours left, and what now is for.
+              if (glance != null)
+                Positioned(
+                  left: 14,
+                  right: 14,
+                  bottom: 38,
+                  child: GestureDetector(
+                    onTap: () => openWorld(context, store, practice),
+                    child: Container(
+                      padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+                      decoration: BoxDecoration(color: Colors.black.withValues(alpha: .38), borderRadius: BorderRadius.circular(16)),
+                      child: Row(children: [
+                        const Icon(Icons.hourglass_top_rounded, size: 18, color: Colors.white),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                            Text('เวลาอ่านจริงก่อนสอบ ${glance.$1} ชม.',
+                                style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600)),
+                            Text('${glance.$3} · ตอนนี้ ${glance.$2}',
+                                maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white70, fontSize: 12)),
+                          ]),
+                        ),
+                        const Icon(Icons.chevron_right_rounded, color: Colors.white70, size: 20),
+                      ]),
+                    ),
+                  ),
+                ),
               Positioned(
                 right: 18,
                 bottom: 14,
@@ -89,6 +121,20 @@ class TodayPage extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 14),
+
+        WorldPortal(store: store, practice: practice),
+        const SizedBox(height: 10),
+
+        // For whatever the reader wants to do but cannot begin.
+        _QuickAction(
+          icon: Icons.bolt_rounded,
+          title: 'เริ่มแค่ 2 นาที',
+          sub: 'อยากทำแต่ไม่อยากเริ่ม · ครบแล้วค่อยเลือกว่าจะทำต่อไหม',
+          color: p.gold,
+          glow: true,
+          onTap: () => openStart(context, store),
+        ),
+        const SizedBox(height: 10),
 
         // The two smallest doors back to the present.
         Row(children: [

@@ -89,6 +89,43 @@ Future<void> cancelClassBells() async {
   }
 }
 
+// ---- study world: a nudge when each block of the life schedule begins ----
+const _studyBellBase = 300;
+const _studyBellMax = 60;
+
+/// Replace all study-schedule reminders with [bells] (time, title, body).
+Future<bool> scheduleStudyBells(List<(DateTime, String, String)> bells) async {
+  if (kIsWeb) return true;
+  await cancelStudyBells();
+  final android = _plugin.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
+  final ok = await android?.requestNotificationsPermission() ?? true;
+  if (!ok) return false;
+  final now = DateTime.now();
+  var n = 0;
+  for (final (at, title, body) in bells) {
+    if (!at.isAfter(now) || n >= _studyBellMax) continue;
+    await _plugin.zonedSchedule(
+      id: _studyBellBase + n++,
+      title: title,
+      body: body,
+      scheduledDate: tz.TZDateTime.from(at, tz.local),
+      notificationDetails: const NotificationDetails(
+        android: AndroidNotificationDetails('studyplan', 'ตารางอ่านหนังสือ',
+            channelDescription: 'เตือนเมื่อถึงเวลารอบอ่าน ทวน และวางมือถือนอน', importance: Importance.high, priority: Priority.high),
+      ),
+      androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
+    );
+  }
+  return true;
+}
+
+Future<void> cancelStudyBells() async {
+  if (kIsWeb) return;
+  for (var i = 0; i < _studyBellMax; i++) {
+    await _plugin.cancel(id: _studyBellBase + i);
+  }
+}
+
 Future<void> openReminderSheet(BuildContext context, Store store) => showModalBottomSheet(
       context: context,
       isScrollControlled: true,
