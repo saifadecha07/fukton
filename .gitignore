@@ -52,3 +52,6 @@ android/signing-key-backup/
 *.keystore
 *.jks
 android/key.properties
+
+# Gradle reports from local Android builds
+/android/build/
